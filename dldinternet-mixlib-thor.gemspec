@@ -20,10 +20,10 @@ Gem::Specification.new do |gem|
   gem.add_runtime_dependency 			'thor', '~> 0.19', '>= 0'
   gem.add_dependency              'awesome_print'                       #, '~> 1.2'
   gem.add_dependency              'paint-shortcuts', '>= 0'
-  gem.add_dependency              'dldinternet-mixlib-logging'          , '~> 0.5'
   gem.add_dependency              'inifile'                             #, '~> '
   gem.add_dependency              'hashie'                             #, '~> '
   gem.add_dependency              'command_line_reporter', '~> 3.3', '>= 3.3.6'
+  gem.add_dependency              'dldinternet-mixlib-logging', '>= 0.7.0'
 
   gem.add_development_dependency 'bundler', '~> 1.0'
   gem.add_development_dependency 'rake', '~> 10'
