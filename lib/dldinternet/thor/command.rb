@@ -56,10 +56,18 @@ module DLDInternet
       def initialize(args = [], local_options = {}, config = {})
         super(args,local_options,config)
         @log_level = :warn #|| @config[:log_level].to_sym
-        @formatter ||= ->(hsh, tit) { default_formatter(hsh, tit) }
-        @writer    ||= ->(str) { puts str }
-        @header ||= ->{}
-        @format ||= ->(res) { puts res.ai }
+        @formatter ||= ->(hsh, opts) {
+          default_formatter(hsh, opts)
+        }
+        @writer    ||= ->(str) {
+          puts str
+        }
+        @header ||= ->(res, fmtr=nil) {
+          default_header(res, fmtr)
+        }
+        @format ||= ->(res, fmtr=nil) {
+          default_format(res, nil, fmtr)
+        }
       end
 
       desc "help [COMMAND]", "Describe available commands or one specific command"

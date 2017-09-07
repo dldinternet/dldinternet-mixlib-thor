@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
+require 'dldinternet/formatters/basic'
 require 'dldinternet/formatters/colors'
-require 'awesome_print'
 require 'command_line_reporter'
 
 module DLDInternet
@@ -11,25 +11,22 @@ module DLDInternet
     class Table < DLDInternet::Formatters::Basic
       include CommandLineReporter
 
-      attr_reader :widths
-      attr_reader :is_a_hash
-
-      def initialize(obj, format, title)
+      def initialize(obj, format, options)
         super
-        # self.formatter = ''
-        @object = [@object] unless @object.is_a?(Array)
-        @is_a_hash = @object[0].is_a?(Hash)
+        # @object = [@object] unless @object.is_a?(Array)
+        @values  = Hashie::Mash.new
       end
 
       def run
         suppress_output
 
-        header(title: @title, align: 'center') if @title
+        header(title: @title, align: 'center') if @title #&& !@title.empty?
 
         table border: true, encoding: :ascii do
           header_row
           idx = 0
-          @object.each do |obj|
+          list = @object.is_a?(Array) ? @object : [@object]
+          list.each do |obj|
             obj_row(idx, obj)
           end
         end
@@ -44,7 +41,7 @@ module DLDInternet
         if @is_a_hash
           row color: 'light_yellow', bold: true, encoding: :ascii do
             @object[0].each do |key, _|
-              column key.to_s, width: widths[key]
+              column key.to_s, width: widths[key] if (@columns.nil? || @columns.keys.include?(key))
             end
           end
         end
@@ -53,57 +50,17 @@ module DLDInternet
       def obj_row(idx, obj)
         row color: 'white', bold: false do
           if @is_a_hash
-            obj.each do |_, val|
-              column val.to_s
+            obj.each do |key, val|
+              if @columns.nil? || (@columns.keys.include?(key) && @columns[key].nil?)
+                column val.to_s
+              else
+                subcolumn(key, val)
+              end
             end
           else
             column obj.to_s, width: widths[idx]
             idx += 1
           end
-        end
-      end
-
-      # :reek:DuplicateMethodCall {enabled: false}
-      def widths
-        unless @widths
-          @widths = Hashie::Mash.new
-          if @is_a_hash
-            widths_hash
-          else
-            widths_array
-          end
-        end
-        @widths
-      end
-
-      def widths_array
-        idx = 0
-        @object.each do |val|
-          set_width(idx, val)
-          idx += 1
-        end
-      end
-
-      def widths_hash
-        @object[0].each do |key, _|
-          klen         = key.to_s.length
-          wid          = @widths[key]
-          @widths[key] = klen if !wid || wid < klen
-        end
-        @object.each do |obj|
-          obj_width(obj)
-        end
-      end
-
-      def set_width(idx, val)
-        vlen         = val.to_s.length
-        wid          = @widths[idx] || 0
-        @widths[idx] = vlen if wid < vlen
-      end
-
-      def obj_width(obj)
-        obj.each do |key, val|
-          set_width(key, val)
         end
       end
 

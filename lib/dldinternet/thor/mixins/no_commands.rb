@@ -5,6 +5,7 @@ require 'dldinternet/formatters'
 require 'hashie/mash'
 require 'dldinternet/thor/version'
 require 'inifile'
+require 'config/factory'
 
 module DLDInternet
   module Thor
@@ -28,6 +29,76 @@ module DLDInternet
           @options[:log_level] ||= :warn
           @options[:format] ||= @options[:output]
           @options[:output] ||= @options[:format]
+        end
+
+        def load_inifile
+          unless File.exist?(@options[:inifile])
+            raise "#{@options[:inifile]} not found!"
+          end
+          begin
+            ini = ::IniFile.load(@options[:inifile])
+            ini['global'].each{ |key,value|
+              @options[key.to_s]=value
+              ENV[key.to_s]=value
+            }
+            def _expand(k,v,regex,rerun)
+              matches = v.match(regex)
+              if matches
+                var = matches[1]
+                if options[var]
+                  options[k]=v.gsub(/\%\(#{var}\)/,options[var]).gsub(/\%#{var}/,options[var])
+                else
+                  rerun[var] = 1
+                end
+              end
+            end
+
+            pending = nil
+            rerun = {}
+            begin
+              pending = rerun
+              rerun = {}
+              options.to_hash.each{|k,v|
+                if v.to_s.match(/\%/)
+                  _expand(k,v,%r'[^\\]\%\((\w+)\)', rerun)
+                  _expand(k,v,%r'[^\\]\%(\w+)',     rerun)
+                end
+              }
+              # Should break out the first time that we make no progress!
+            end while pending != rerun
+          rescue ::IniFile::Error => e
+            # noop
+          rescue ::Exception => e
+            @logger.error "#{e.class.name} #{e.message}"
+            raise e
+          end
+        end
+
+        def load_config
+          if File.exist?(@options[:config])
+            begin
+              envs = ::Config::Factory::Environments.load_file(@options[:config])
+              if envs and envs.is_a?(Hash) and @options[:environment]
+                @options[:environments] = ::Hashie::Mash.new(envs)
+              else
+                yaml = ::YAML.load(File.read(@options[:config]))
+                if yaml
+                  yaml.each {|key, value|
+                    @options[key.to_s.gsub(%r{[-]}, '_').to_sym]=value
+                  }
+                else
+                  msg = "#{options.config} is not a valid configuration!"
+                  @logger.error msg
+                  raise StandardError.new(msg)
+                end
+              end
+            rescue ::Exception => e
+              @logger.error "#{e.class.name} #{e.message}"
+              raise e
+            end
+          else
+            @logger.warn "#{options.config} not found"
+          end
         end
 
         def parse_options
@@ -60,63 +131,20 @@ module DLDInternet
           }
           }
           @config[:log_levels] ||= LOG_LEVELS
+          @options[:log_config] = @config
           # initLogging(@config)
           @logger = getLogger(@config)
 
           if @options[:inifile]
             @options[:inifile] = File.expand_path(@options[:inifile])
-            unless File.exist?(@options[:inifile])
-              raise "#{@options[:inifile]} not found!"
-            end
-            begin
-              ini = ::IniFile.load(@options[:inifile])
-              ini['global'].each{ |key,value|
-                @options[key.to_s]=value
-                ENV[key.to_s]=value
-              }
-              def _expand(k,v,regex,rerun)
-                matches = v.match(regex)
-                if matches
-                  var = matches[1]
-                  if options[var]
-                    options[k]=v.gsub(/\%\(#{var}\)/,options[var]).gsub(/\%#{var}/,options[var])
-                  else
-                    rerun[var] = 1
-                  end
-                end
-              end
-
-              pending = nil
-              rerun = {}
-              begin
-                pending = rerun
-                rerun = {}
-                options.to_hash.each{|k,v|
-                  if v.to_s.match(/\%/)
-                    _expand(k,v,%r'[^\\]\%\((\w+)\)', rerun)
-                    _expand(k,v,%r'[^\\]\%(\w+)',     rerun)
-                  end
-                }
-                # Should break out the first time that we make no progress!
-              end while pending != rerun
-            rescue ::IniFile::Error => e
-              # noop
-            rescue ::Exception => e
-              @logger.error "#{e.class.name} #{e.message}"
-              raise e
-            end
+            load_inifile
           elsif @options[:config]
             @options[:config] = File.expand_path(@options[:config])
-            if File.exist?(@options[:config])
-              begin
-                yaml = ::YAML.load(File.read(@options[:config]))
-                yaml.each{ |key,value|
-                  @options[key.to_s.gsub(%r{[-]},'_')]=value
-                }
-              rescue ::Exception => e
-                @logger.error "#{e.class.name} #{e.message}"
-                raise e
-              end
+            if @options[:config] =~ /\.ini/i
+              @options[:inifile] = @options[:config]
+              load_inifile
+            else
+              load_config
             end
           end
           if options[:debug]
@@ -134,22 +162,33 @@ module DLDInternet
           @config[:output] || :none
         end
 
-        def default_formatter(obj, title)
-          format_helper = DLDInternet::Formatters::Basic.new(obj, notation, title)
+        def default_formatter(obj, opts=nil)
+          opts ||= Hashie::Mash.new(options.to_h)
+          format_helper = DLDInternet::Formatters::Basic.new(obj, notation, title: opts[:title], columns: opts[:columns])
           case notation.to_sym
+          when :json
+          when :yaml
           when :none
           when :basic
           when :text
             # noop
           when :awesome
-            format_helper = DLDInternet::Formatters::Awesome.new(obj, notation, title)
-          when :json
-          when :yaml
+            format_helper = DLDInternet::Formatters::Awesome.new(obj, notation, title: opts[:title], columns: opts[:columns])
           when :table
-            format_helper = DLDInternet::Formatters::Table.new(obj, notation, title)
+            format_helper = DLDInternet::Formatters::Table.new(obj, notation, title: opts[:title], columns: opts[:columns])
           else
             raise DLDInternet::Formatters::Error, "Unknown format requested: #{notation}"
           end
+          format_helper
+        end
+
+        def default_header(obj, format_helper=nil)
+          format_helper ||= default_formatter(obj)
+          format_helper.header_it
+        end
+
+        def default_format(obj, opts=nil, format_helper=nil)
+          format_helper ||= default_formatter(obj, opts || options)
           format_helper.format_it
         end
 
@@ -176,18 +215,19 @@ module DLDInternet
           end
         end
 
-        def format_it(obj, title = '')
-          formatter.call(obj, title)
+        def string_it(obj, fmtr=nil, header=false)
+          fmtr ||= @formatter.call(obj, options)
+          fmtr.send(header ? :header_it : :format_it, obj)
         end
 
         def write(obj)
           writer.call(obj)
         end
 
-        def output(obj)
+        def output(obj, fmtr=nil, header=false)
           unless obj.nil?
             hash = obj.is_a?(Array) ? obj.map { |o| hash_it(o) } : (obj.is_a?(String) ? obj : hash_it(obj))
-            str = format_it(hash)
+            str = string_it(hash, fmtr, header)
             write str
           end
         end
@@ -197,30 +237,46 @@ module DLDInternet
           @logger.info @_invocations.map{ |_,v| v[0]}.join(' ') if options[:verbose]
         end
 
-        def command_out(res)
+        def command_out(res, fmtr=nil)
+          unless fmtr
+            fmtr = formatter.call(res, options)
+            fmtr.table_widths
+          end
           case options[:format]
-          when /text|none/
-            output header_line unless options[:header] === false
+          when /text|none|plain/
+            output(header_line(res, fmtr), fmtr, true) unless options[:header] === false
             case res.class.name
             when /Array/
               res.each do |obj|
-                output format_line(obj)
+                output format_line(obj, fmtr)
               end
             # when /Hash|String/
             else
-              output format_line(res)
+              output format_line(res, fmtr)
             end
           else
             output res
           end
         end
 
-        def header_line()
-          @header.call()
+        def header_line(obj, fmtr=nil)
+          if obj.is_a?(String)
+            obj
+          elsif obj.is_a?(Hash)
+            @header.call(obj, fmtr)
+          elsif obj.is_a?(Array)
+            if obj.size > 0
+              header_line(obj[0], fmtr)
+            else
+              header_line({}, fmtr)
+            end
+          else
+            raise "Cannot produce header from this object: #{obj.class.name}"
+          end
         end
 
-        def format_line(obj)
-          @format.call(obj)
+        def format_line(obj, fmtr=nil)
+          @format.call(obj, fmtr)
         end
 
         def invoke_command(command, *args) #:nodoc:
