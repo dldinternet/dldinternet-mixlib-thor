@@ -17,7 +17,7 @@ Gem::Specification.new do |gem|
   gem.test_files    = gem.files.grep(%r{^(test|spec|features)/})
   gem.require_paths = ['lib']
 
-  gem.add_runtime_dependency 			'thor', '~> 0.19', '>= 0'
+  gem.add_runtime_dependency 			'thor', '~> 0.19', '>= 0.19.4'
   gem.add_dependency              'awesome_print'                       #, '~> 1.2'
   gem.add_dependency              'paint-shortcuts', '>= 0'
   gem.add_dependency              'inifile'                             #, '~> '
@@ -25,6 +25,8 @@ Gem::Specification.new do |gem|
   gem.add_dependency              'command_line_reporter', '~> 3.3', '>= 3.3.6'
   gem.add_dependency              'dldinternet-mixlib-logging', '>= 0.7.0'
   gem.add_dependency              'config-factory'                      #, '~> '
+  gem.add_dependency              'vcr', '~> 3.0', '>= 3.0.3'
+  gem.add_dependency              'activesupport', '~> 5.1', '>= 5.1.4'
 
   gem.add_development_dependency 'bundler', '~> 1.0'
   gem.add_development_dependency 'rake', '~> 10'

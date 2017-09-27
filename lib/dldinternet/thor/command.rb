@@ -1,4 +1,5 @@
 require 'thor'
+require 'dldinternet/thor/dynamic_command'
 require 'awesome_print'
 
 module DLDInternet
@@ -10,6 +11,8 @@ module DLDInternet
         include DLDInternet::Thor::MixIns::NoCommands
 
       end
+
+      attr_reader :cassette,:vcr_logger
 
       class << self
         attr_accessor :invocations
@@ -33,6 +36,10 @@ module DLDInternet
           0
         end
 
+        def dynamic_command_class #:nodoc:
+          ::DLDInternet::Thor::DynamicCommand
+        end
+
         def handle_argument_error(command, error, args, arity) #:nodoc:
           command_s = banner(command)
           # msg = "ERROR: \"#{basename} #{command.name}\" was called with "
@@ -41,6 +48,11 @@ module DLDInternet
           msg << "arguments " << args.inspect unless args.empty?
           msg << "\nUsage: #{command_s}"
           raise ::Thor::InvocationError, msg
+        end
+
+        def handle_no_command_error(command, has_namespace = $thor_runner) #:nodoc:
+          raise ::Thor::UndefinedCommandError, "Could not find command #{command.inspect} in #{namespace.inspect} namespace." if has_namespace
+          raise ::Thor::UndefinedCommandError, "Could not find command #{command.inspect}."
         end
 
         protected

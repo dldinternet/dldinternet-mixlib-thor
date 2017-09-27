@@ -6,6 +6,39 @@ require 'hashie/mash'
 require 'dldinternet/thor/version'
 require 'inifile'
 require 'config/factory'
+require 'dldinternet/thor/vcr'
+require 'active_support/core_ext/object/blank'
+
+class String
+  def to_bool
+    return true   if self == true   || !self.match(/^(true|t|yes|y|1|on)$/i).nil?
+    return false  if self == false  || self.blank? || !self.match(/^(false|f|no|n|0|off)$/i).nil?
+    raise ArgumentError.new("invalid value for Boolean: \"#{self}\"")
+  end
+  alias :to_b :to_bool
+
+  def class_from
+    self.split('::').inject(Object) do |mod, class_name|
+      mod.const_get(class_name)
+    end
+  end
+  alias :to_class :class_from
+
+end
+
+class TrueClass
+  def to_bool
+    true
+  end
+  alias :to_b :to_bool
+end
+
+class FalseClass
+  def to_bool
+    false
+  end
+  alias :to_b :to_bool
+end
 
 module DLDInternet
   module Thor
@@ -19,8 +52,7 @@ module DLDInternet
         include DLDInternet::Mixlib::Logging
 
         def validate_options
-          OptionsMash.disable_warnings
-          @options = OptionsMash.new(@options.to_h)
+          writeable_options
           if options[:log_level]
             log_level = options[:log_level].to_sym
             raise "Invalid log-level: #{log_level}" unless LOG_LEVELS.include?(log_level)
@@ -31,8 +63,14 @@ module DLDInternet
           @options[:output] ||= @options[:format]
         end
 
+        def writeable_options
+          return if @options.is_a?(OptionsMash)
+          OptionsMash.disable_warnings
+          @options = OptionsMash.new(@options.to_h)
+        end
+
         def load_inifile
-          unless File.exist?(@options[:inifile])
+          unless !@options[:inifile].blank? && File.exist?(@options[:inifile])
             raise "#{@options[:inifile]} not found!"
           end
           begin
@@ -75,71 +113,49 @@ module DLDInternet
         end
 
         def load_config
-          if File.exist?(@options[:config])
-            begin
-              envs = ::Config::Factory::Environments.load_file(@options[:config])
-              if envs and envs.is_a?(Hash) and @options[:environment]
-                @options[:environments] = ::Hashie::Mash.new(envs)
-              else
-                yaml = ::YAML.load(File.read(@options[:config]))
-                if yaml
-                  yaml.each {|key, value|
-                    @options[key.to_s.gsub(%r{[-]}, '_').to_sym]=value
-                  }
+          unless @options[:config].blank?
+            @options[:config] = File.expand_path(@options[:config])
+            if ::File.exist?(@options[:config])
+              begin
+                envs = ::Config::Factory::Environments.load_file(@options[:config])
+                if envs and envs.is_a?(Hash) and @options[:environment]
+                  @options[:environments] = ::Hashie::Mash.new(envs)
                 else
-                  msg = "#{options.config} is not a valid configuration!"
-                  @logger.error msg
-                  raise StandardError.new(msg)
+                  yaml = ::YAML.load(File.read(@options[:config]))
+                  if yaml
+                    yaml.each {|key, value|
+                      @options[key.to_s.gsub(%r{[-]}, '_').to_sym]=value
+                    }
+                  else
+                    msg = "#{options.config} is not a valid configuration!"
+                    @logger.error msg
+                    raise StandardError.new(msg)
+                  end
                 end
+              rescue ::Exception => e
+                @logger.error "#{e.class.name} #{e.message}"
+                raise e
               end
-            rescue ::Exception => e
-              @logger.error "#{e.class.name} #{e.message}"
-              raise e
+            else
+              @logger.warn "#{options.config} not found"
+              @logger.error "Invalid/No configuration file specified"
+              exit 2
+              #@options[:environments] = ::Hashie::Mash.new
             end
           else
-            @logger.warn "#{options.config} not found"
+            @logger.error 'Invalid/No configuration file specified'
           end
         end
 
         def parse_options
           validate_options
 
-          lcs = ::Logging::ColorScheme.new( 'compiler', :levels => {
-              :trace => :blue,
-              :debug => :cyan,
-              :info  => :green,
-              :note  => :green,
-              :warn  => :yellow,
-              :error => :red,
-              :fatal => :red,
-              :todo  => :purple,
-          })
-          scheme = lcs.scheme
-          scheme['trace'] = "\e[38;5;33m"
-          scheme['fatal'] = "\e[38;5;89m"
-          scheme['todo']  = "\e[38;5;55m"
-          lcs.scheme scheme
-          @config         = @options.dup
-          @config[:log_opts] = lambda{|mlll| {
-              :pattern      => "%#{mlll}l: %m %g\n",
-              :date_pattern => '%Y-%m-%d %H:%M:%S',
-              :color_scheme => 'compiler',
-              :trace        => (@config[:trace].nil? ? false : @config[:trace]),
-              # [2014-06-30 Christo] DO NOT do this ... it needs to be a FixNum!!!!
-              # If you want to do ::Logging.init first then fine ... go ahead :)
-              # :level        => @config[:log_level],
-          }
-          }
-          @config[:log_levels] ||= LOG_LEVELS
-          @options[:log_config] = @config
-          # initLogging(@config)
-          @logger = getLogger(@config)
+          get_logger(true)
 
           if @options[:inifile]
             @options[:inifile] = File.expand_path(@options[:inifile])
             load_inifile
           elsif @options[:config]
-            @options[:config] = File.expand_path(@options[:config])
             if @options[:config] =~ /\.ini/i
               @options[:inifile] = @options[:config]
               load_inifile
@@ -150,7 +166,49 @@ module DLDInternet
           if options[:debug]
             @logger.info "Options:\n#{options.ai}"
           end
+          if options[:stubber].is_a?(String)
+            options[:stubber] = options[:stubber].split(/\s*,\s*/).map(&:to_sym)
+          elsif options[:stubber].is_a?(Array) && options[:stubber].size == 1 && options[:stubber][0].is_a?(String)
+            options[:stubber] = options[:stubber][0].split(/\s*,\s*/).map(&:to_sym)
+          elsif options[:stubber].is_a?(Array) && options[:stubber].size > 1 && options[:stubber][0].is_a?(String)
+            options[:stubber] = options[:stubber].map(&:to_sym)
+          end
 
+        end
+
+        def get_logger(force=false)
+          return unless force || @logger.nil?
+          writeable_options
+          lcs             = ::Logging::ColorScheme.new('compiler', :levels => {
+              :trace => :blue,
+              :debug => :cyan,
+              :info  => :green,
+              :note  => :green,
+              :warn  => :yellow,
+              :error => :red,
+              :fatal => :red,
+              :todo  => :purple,
+          })
+          scheme          = lcs.scheme
+          scheme['trace'] = "\e[38;5;33m"
+          scheme['fatal'] = "\e[38;5;89m"
+          scheme['todo']  = "\e[38;5;55m"
+          lcs.scheme scheme
+          @config               = @options.dup
+          @config[:log_opts]    = lambda {|mlll| {
+              :pattern      => "%#{mlll}l: %m %g\n",
+              :date_pattern => '%Y-%m-%d %H:%M:%S',
+              :color_scheme => 'compiler',
+              :trace        => (@config[:trace].nil? ? false : @config[:trace]),
+              # [2014-06-30 Christo] DO NOT do this ... it needs to be a FixNum!!!!
+              # If you want to do ::Logging.init first then fine ... go ahead :)
+              # :level        => @config[:log_level],
+          }
+          }
+          @config[:log_levels]  ||= LOG_LEVELS
+          @options[:log_config] = @config
+          # initLogging(@config)
+          @logger = getLogger(@config)
         end
 
         def abort!(msg)
@@ -233,8 +291,16 @@ module DLDInternet
         end
 
         def command_pre(*args)
+          args.flatten!
           parse_options
           @logger.info @_invocations.map{ |_,v| v[0]}.join(' ') if options[:verbose]
+          command_pre_start_vcr(args)
+        end
+
+        def command_post(rc=0)
+          command_post_stop_vcr
+          @command_post = true
+          rc
         end
 
         def command_out(res, fmtr=nil)
@@ -284,6 +350,45 @@ module DLDInternet
           super
         end
 
+        def handle_no_command_error(command, has_namespace = $thor_runner)
+          get_logger unless @logger#:nodoc:
+          @logger.error "Could not find command #{command.inspect} in #{namespace.inspect} namespace." if has_namespace
+          @logger.error "Could not find command #{command.inspect}."
+          1
+        end
+
+        protected
+
+        def command_pre_start_vcr(*args)
+          args.flatten!
+          if options[:vcr]
+            unless options[:cassette_path].match(%r{^#{File::SEPARATOR}})
+              if File.dirname($0).eql?(Dir.pwd)
+                @logger.error "Saving fixtures to #{Dir.pwd}!"
+                exit 1
+              end
+            end
+
+            @vcr_logger ||= ::DLDInternet::Thor::VCR::Logger.new(nil, @logger)
+            ::VCR.configure do |config|
+              config.cassette_library_dir = options[:cassette_path]
+              config.hook_into *options[:stubber]
+              config.logger = @vcr_logger
+            end
+            opts = args[0].is_a?(Hash) ? args.shift : {}
+            options[:cassette] ||= @_invocations.map{ |_,v| v[0]}.join('-')
+            @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette], match_requests_on: [:method,:uri,:headers,:body], record: options[:record_mode])
+          end
+          yield if block_given?
+        end
+
+        def command_post_stop_vcr
+          if options[:vcr]
+            ::VCR.eject_cassette
+            @cassette = nil
+            @vcr_logger = nil
+          end
+        end
       end
     end
   end
