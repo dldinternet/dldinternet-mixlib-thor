@@ -1,5 +1,6 @@
 require 'thor'
 require 'dldinternet/thor/dynamic_command'
+require 'dldinternet/thor/errors'
 require 'awesome_print'
 
 module DLDInternet

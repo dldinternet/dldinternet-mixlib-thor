@@ -27,6 +27,7 @@ Gem::Specification.new do |gem|
   gem.add_dependency              'config-factory'                      #, '~> '
   gem.add_dependency              'vcr', '~> 3.0', '>= 3.0.3'
   gem.add_dependency              'activesupport', '~> 5.1', '>= 5.1.4'
+  gem.add_dependency              'json-pointer', '~> 0.0', '< 0.1'
 
   gem.add_development_dependency 'bundler', '~> 1.0'
   gem.add_development_dependency 'rake', '~> 10'

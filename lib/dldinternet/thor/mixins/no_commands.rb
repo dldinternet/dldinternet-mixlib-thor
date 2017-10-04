@@ -4,6 +4,7 @@ require 'yaml'
 require 'dldinternet/formatters'
 require 'hashie/mash'
 require 'dldinternet/thor/version'
+require 'dldinternet/thor/errors'
 require 'inifile'
 require 'config/factory'
 require 'dldinternet/thor/vcr'
@@ -45,22 +46,32 @@ module DLDInternet
     LOG_LEVELS = [:trace, :debug, :info, :note, :warn, :error, :fatal, :todo]
 
     class OptionsMash < ::Hashie::Mash ; end
+    class ConfigMash < ::Hashie::Mash
+      def initialize(source_hash = nil, default = nil, &blk)
+        self.class.disable_warnings
+        super
+      end
+    end
 
     module MixIns
       module NoCommands
         require 'dldinternet/mixlib/logging'
         include DLDInternet::Mixlib::Logging
 
-        def validate_options
+        def validate_options(*args)
           writeable_options
           if options[:log_level]
             log_level = options[:log_level].to_sym
             raise "Invalid log-level: #{log_level}" unless LOG_LEVELS.include?(log_level)
             options[:log_level] = log_level
           end
-          @options[:log_level] ||= :warn
           @options[:format] ||= @options[:output]
           @options[:output] ||= @options[:format]
+
+          args.flatten!
+          if !args.empty? && args.map{ |a| /^-/.match(a) }.any?
+            raise DLDInternet::Thor::BadArgumentError, "Invalid arguments provided: #{args}"
+          end
         end
 
         def writeable_options
@@ -113,21 +124,25 @@ module DLDInternet
         end
 
         def load_config
-          unless @options[:config].blank?
-            @options[:config] = File.expand_path(@options[:config])
-            if ::File.exist?(@options[:config])
+          if @options[:configfile].blank?
+            @logger.error 'Invalid/No configuration file specified'
+          else
+            @options[:configfile] = File.expand_path(@options[:configfile])
+            if ::File.exist?(@options[:configfile])
               begin
-                envs = ::Config::Factory::Environments.load_file(@options[:config])
+                # envs = ::Config::Factory::Environments.load_file(@options[:configfile])
+                hash = config_to_yaml
+                envs = ::Config::Factory::Environments.load_hash(hash)
                 if envs and envs.is_a?(Hash) and @options[:environment]
                   @options[:environments] = ::Hashie::Mash.new(envs)
                 else
-                  yaml = ::YAML.load(File.read(@options[:config]))
+                  yaml = ::YAML.load(File.read(@options[:configfile]))
                   if yaml
                     yaml.each {|key, value|
                       @options[key.to_s.gsub(%r{[-]}, '_').to_sym]=value
                     }
                   else
-                    msg = "#{options.config} is not a valid configuration!"
+                    msg = "#{options[:configfile]} is not a valid configuration!"
                     @logger.error msg
                     raise StandardError.new(msg)
                   end
@@ -137,27 +152,67 @@ module DLDInternet
                 raise e
               end
             else
-              @logger.warn "#{options.config} not found"
+              @logger.warn "'#{options[:configfile]}' not found"
               @logger.error "Invalid/No configuration file specified"
               exit 2
               #@options[:environments] = ::Hashie::Mash.new
             end
-          else
-            @logger.error 'Invalid/No configuration file specified'
           end
         end
 
-        def parse_options
-          validate_options
+        def solve_pointers(haystack, hash=nil)
+          hash ||= haystack
+          return haystack unless hash.is_a?(Hash) && hash.size
 
+          hash.dup.each do |k,v|
+            if %r{^[#/]}.match?(k) && v.nil?
+              begin
+                require 'hana'
+                pointer = Hana::Pointer.new k
+                v = pointer.eval(haystack)
+                hash.delete(k)
+                hash.merge!(v)
+              rescue Exception => e
+                require 'json-pointer'
+                pointer = ::JsonPointer.new(haystack, k, :symbolize_keys => true)
+                if pointer.exists?
+                  hash.delete(k)
+                  hash.merge!(pointer.value)
+                end
+              end
+            end
+          end
+          hash.each do |k,v|
+            if v && v.is_a?(Hash)
+              haystack = solve_pointers(haystack, v)
+            end
+          end
+          haystack
+        end
+
+        def config_to_yaml
+          begin
+            yaml = ConfigMash.new(::YAML.load(File.read(@options[:configfile])))
+            yaml = solve_pointers(yaml)
+            yaml
+          rescue StandardError => e
+            raise e
+          end
+        end
+
+        def parse_options(*args)
           get_logger(true)
+
+          args.flatten!
+          check_for_help(args)
+          validate_options(args)
 
           if @options[:inifile]
             @options[:inifile] = File.expand_path(@options[:inifile])
             load_inifile
-          elsif @options[:config]
-            if @options[:config] =~ /\.ini/i
-              @options[:inifile] = @options[:config]
+          elsif @options[:configfile]
+            if @options[:configfile] =~ /\.ini/i
+              @options[:inifile] = @options[:configfile]
               load_inifile
             else
               load_config
@@ -166,19 +221,22 @@ module DLDInternet
           if options[:debug]
             @logger.info "Options:\n#{options.ai}"
           end
-          if options[:stubber].is_a?(String)
-            options[:stubber] = options[:stubber].split(/\s*,\s*/).map(&:to_sym)
-          elsif options[:stubber].is_a?(Array) && options[:stubber].size == 1 && options[:stubber][0].is_a?(String)
-            options[:stubber] = options[:stubber][0].split(/\s*,\s*/).map(&:to_sym)
-          elsif options[:stubber].is_a?(Array) && options[:stubber].size > 1 && options[:stubber][0].is_a?(String)
-            options[:stubber] = options[:stubber].map(&:to_sym)
-          end
 
+        end
+
+        # Child classes can override this if desired
+        def check_for_help(args)
+          if args && args.size > 0 && (args[0] && args[0].downcase.eql?('help') || args.select {|a| a.match(/--help/i)}.any?)
+            invocations = @_invocations.map {|_, v| v[0]}
+            self.class.command_help(shell, invocations[-1], invocations)
+            exit 0
+          end
         end
 
         def get_logger(force=false)
           return unless force || @logger.nil?
           writeable_options
+          @options[:log_level] ||= :warn
           lcs             = ::Logging::ColorScheme.new('compiler', :levels => {
               :trace => :blue,
               :debug => :cyan,
@@ -217,7 +275,7 @@ module DLDInternet
         end
 
         def notation
-          @config[:output] || :none
+          @config[:format] || :none
         end
 
         def default_formatter(obj, opts=nil)
@@ -226,8 +284,9 @@ module DLDInternet
           case notation.to_sym
           when :json
           when :yaml
+          when :csv
           when :none
-          when :basic
+          # when :basic
           when :text
             # noop
           when :awesome
@@ -291,8 +350,8 @@ module DLDInternet
         end
 
         def command_pre(*args)
-          args.flatten!
-          parse_options
+          # args.flatten!
+          parse_options(args)
           @logger.info @_invocations.map{ |_,v| v[0]}.join(' ') if options[:verbose]
           command_pre_start_vcr(args)
         end
@@ -308,6 +367,8 @@ module DLDInternet
             fmtr = formatter.call(res, options)
             fmtr.table_widths
           end
+          # [2017-10-06 Christo] header_line and format_line serves to invoke client hooks if provided.
+          # It means we may go through the process once with an object and a second time with a formatted string
           case options[:format]
           when /text|none|plain/
             output(header_line(res, fmtr), fmtr, true) unless options[:header] === false
@@ -361,6 +422,13 @@ module DLDInternet
 
         def command_pre_start_vcr(*args)
           args.flatten!
+          if options[:stubber].is_a?(String)
+            options[:stubber] = options[:stubber].split(/\s*,\s*/).map(&:to_sym)
+          elsif options[:stubber].is_a?(Array) && options[:stubber].size == 1 && options[:stubber][0].is_a?(String)
+            options[:stubber] = options[:stubber][0].split(/\s*,\s*/).map(&:to_sym)
+          elsif options[:stubber].is_a?(Array) && options[:stubber].size > 1 && options[:stubber][0].is_a?(String)
+            options[:stubber] = options[:stubber].map(&:to_sym)
+          end
           if options[:vcr]
             unless options[:cassette_path].match(%r{^#{File::SEPARATOR}})
               if File.dirname($0).eql?(Dir.pwd)
@@ -369,17 +437,22 @@ module DLDInternet
               end
             end
 
-            @vcr_logger ||= ::DLDInternet::Thor::VCR::Logger.new(nil, @logger)
-            ::VCR.configure do |config|
-              config.cassette_library_dir = options[:cassette_path]
-              config.hook_into *options[:stubber]
-              config.logger = @vcr_logger
-            end
+            command_pre_config_vcr
             opts = args[0].is_a?(Hash) ? args.shift : {}
             options[:cassette] ||= @_invocations.map{ |_,v| v[0]}.join('-')
-            @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette], match_requests_on: [:method,:uri,:headers,:body], record: options[:record_mode])
+            @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette])
           end
           yield if block_given?
+        end
+
+        def command_pre_config_vcr
+          @vcr_logger ||= ::DLDInternet::Thor::VCR::Logger.new(nil, @logger)
+          ::VCR.configure do |config|
+            config.cassette_library_dir = options[:cassette_path]
+            config.hook_into *options[:stubber]
+            config.logger = @vcr_logger
+            config.default_cassette_options.merge!({ match_requests_on: [:method, :uri, :headers, :body], record: options[:record_mode] })
+          end
         end
 
         def command_post_stop_vcr

@@ -2,6 +2,7 @@
 
 require 'json'
 require 'yaml'
+require 'csv'
 require 'awesome_print'
 require 'hashie/mash'
 
@@ -72,8 +73,10 @@ module DLDInternet
           @widths = Hashie::Mash.new
           if @is_a_hash
             widths_hash
-          else
+          elsif @object.is_a?(Array)
             widths_array
+          else
+            widths_object
           end
         end
         @widths
@@ -106,11 +109,75 @@ module DLDInternet
       private
 
       def format_item(item, header=false)
-        case format.to_s.downcase
+        fmt = format.to_s.downcase
+        if /json|yaml|csv/.match?(fmt)
+          item = if @columns.nil?
+                   item
+                 else
+                   item = item.dup
+                   if item.is_a?(Array)
+                     nitm = item.map do |itm|
+                       hitm = Hash[itm.map do |key, val|
+                         if @columns.keys.include?(key) && @columns[key].nil?
+                           [key,val]
+                         end
+                       end.select{ |e| !e.nil? }]
+                     end
+                     nitm
+                   elsif item.is_a?(Hash)
+                   else
+                     item
+                   end
+                 end
+        end
+        case fmt
         when 'json'
           JSON.pretty_generate(item)
         when 'yaml'
           item.to_yaml
+        when 'csv'
+          columns = if @columns.nil?
+                      if item.is_a?(Array)
+                        if item[0].is_a?(Array)
+                          # [2017-10-06 Christo] Assume first row is headings?
+                          item[0] # raise StandardError, "Cannot find column headings"
+                        elsif item[0].is_a?(Hash)
+                          item[0].keys
+                        else
+                          # [2017-10-06 Christo] Assume first row is headings?
+                          item
+                        end
+                      elsif item.is_a?(Hash)
+                        item.keys
+                      else
+                        item
+                      end
+                    else
+                      @columns.keys
+                    end
+          nitm = if item.is_a?(Array)
+                  item.map { |itm|
+                    if itm.is_a?(Array)
+                      itm
+                    elsif itm.is_a?(Hash)
+                      itm.values.map{|v| v.nil? ? '' : v}
+                    else
+                      [itm]
+                    end
+                  }
+                elsif item.is_a?(Hash)
+                  itm.values.map{|v| v.nil? ? '' : v}
+                else
+                  [itm]
+                 end
+          nitm.unshift(columns)
+          header_row = true
+          nitm.map! { |row|
+            o = CSV::Row.new(columns,row,header_row)
+            header_row = false
+            o
+          }
+          csv = CSV::Table.new(nitm).to_csv
         when 'none'
           item
         else
@@ -130,13 +197,14 @@ module DLDInternet
             }
             nitm.join(" ")
           elsif item.is_a?(Hash)
-            item.map do |key, val|
+            nitm = item.map do |key, val|
               if @columns.nil? || (@columns.keys.include?(key) && @columns[key].nil?)
                 sprintf("%-#{widths[key]}s", val.to_s)
-              else
+              elsif !key.index('.').nil?
                 sprintf("%-#{widths[key]}s", subcolumn(key, val))
               end
             end
+            nitm.select{|s| !s.nil?}.join(" ")
           else
             item.to_s
           end
@@ -161,21 +229,24 @@ module DLDInternet
         end
       end
 
+      def widths_object
+        set_width(0, @object)
+      end
+
       def widths_array
-        idx = 0
         @object.each do |val|
-          set_width(idx, val)
-          idx += 1
+          widths_hash(val)
         end
       end
 
-      def widths_hash
-        @object.each do |key, _|
+      def widths_hash(item=nil)
+        item ||= @object
+        item.each do |key, _|
           klen         = key.to_s.length
           wid          = @widths[key]
           @widths[key] = klen if !wid || wid < klen
         end
-        obj_width(@object)
+        obj_width(item)
       end
 
       def set_width(idx, val)
