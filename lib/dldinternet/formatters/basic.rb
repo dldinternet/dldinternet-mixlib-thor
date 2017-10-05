@@ -30,7 +30,11 @@ module DLDInternet
           @columns.dup.map{ |h,v|
             submap(h, v)
           }
+          @object = columnize_item(@object)
         end
+        # unless @columns.nil?
+        #   @object = columnize_item(@object)
+        # end
       end
 
       def header_it(item=nil)

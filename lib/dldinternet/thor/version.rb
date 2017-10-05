@@ -1,7 +1,7 @@
 module Dldinternet
   module Mixlib
     module Thor
-      VERSION = '0.9.2'
+      VERSION = '0.9.3'
 
       module Version # :nodoc: all
         MAJOR, MINOR, RELEASE, *OTHER = VERSION.split '.'

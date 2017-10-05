@@ -15,9 +15,6 @@ module DLDInternet
         super
         # @object = [@object] unless @object.is_a?(Array)
         @values  = Hashie::Mash.new
-        unless @columns.nil?
-          @object = columnize_item(@object)
-        end
       end
 
       def capture_output
