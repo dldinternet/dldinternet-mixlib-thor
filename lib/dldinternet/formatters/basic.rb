@@ -44,6 +44,15 @@ module DLDInternet
             else
               object.to_s
             end
+        item = if item.is_a?(Hash)
+          if @columns.nil?
+            item.keys
+          else
+            @columns.keys
+          end
+        else
+          item
+        end
 
         format_item item, true
       end
@@ -110,26 +119,11 @@ module DLDInternet
 
       def format_item(item, header=false)
         fmt = format.to_s.downcase
-        if /json|yaml|csv/.match?(fmt)
-          item = if @columns.nil?
-                   item
-                 else
-                   item = item.dup
-                   if item.is_a?(Array)
-                     nitm = item.map do |itm|
-                       hitm = Hash[itm.map do |key, val|
-                         if @columns.keys.include?(key) && @columns[key].nil?
-                           [key,val]
-                         end
-                       end.select{ |e| !e.nil? }]
-                     end
-                     nitm
-                   elsif item.is_a?(Hash)
-                   else
-                     item
-                   end
-                 end
-        end
+        # if /json|yaml|csv/.match?(fmt)
+        #   item = if @columns.nil?
+                 #   item
+                 # else
+        item = object_item(item, header)
         case fmt
         when 'json'
           JSON.pretty_generate(item)
@@ -153,7 +147,7 @@ module DLDInternet
                         item
                       end
                     else
-                      @columns.keys
+                      @columns.keys.map{ |k| subkeys(k) }
                     end
           nitm = if item.is_a?(Array)
                   item.map { |itm|
@@ -179,6 +173,7 @@ module DLDInternet
           }
           csv = CSV::Table.new(nitm).to_csv
         when 'none'
+          # columnize_item(item).to_s
           item
         else
           if item.is_a?(Array) # header ||
@@ -198,17 +193,68 @@ module DLDInternet
             nitm.join(" ")
           elsif item.is_a?(Hash)
             nitm = item.map do |key, val|
-              if @columns.nil? || (@columns.keys.include?(key) && @columns[key].nil?)
-                sprintf("%-#{widths[key]}s", val.to_s)
-              elsif !key.index('.').nil?
+              if @columns.nil? || @columns.keys.include?(key) #&& @columns[key].nil?)
                 sprintf("%-#{widths[key]}s", subcolumn(key, val))
+                # sprintf("%-#{widths[key]}s", val.to_s)
+              # elsif !key.index('.').nil?
+              #   sprintf("%-#{widths[key]}s", subcolumn(key, val))
               end
             end
-            nitm.select{|s| !s.nil?}.join(" ")
+            nitm = nitm.select{|s| !s.nil?}.join(" ")
+            nitm
           else
             item.to_s
           end
         end
+      end
+
+      def object_item(item, header=false)
+        unless @columns.nil? || header
+          item = if item.is_a?(Array)
+                   nitm = item.map do |itm|
+                     map_item(itm)
+                   end
+                   nitm
+                 elsif item.is_a?(Hash)
+                   map_item(item)
+                 else
+                   item
+                 end
+          # end
+        end
+        item
+      end
+
+      def map_item(item)
+        itm  = columnize_item(item)
+        mitm = itm.map do |key, val|
+          k, v = [subkeys(key), subcolumn(key, val)]
+          v.nil? ? nil : [k, v]
+          # if @columns.keys.include?(key)
+          # if @columns[key].nil?
+          #   [key,val]
+          # else
+          #   raise "What now"
+          # end
+          # end
+        end
+        mitm = mitm.select {|e| !e.nil?} #&& !e[1].nil? }
+        Hash[mitm]
+      end
+
+      def columnize_item(item)
+        return item if @columns.nil?
+        if item.is_a?(Array)
+          itm = item.map { |obj|
+            columnize_item(obj)
+          }
+        else
+          itm = ::Hashie::Mash.new
+          @columns.map {|k, _|
+            itm[k] = item[k]
+          }
+        end
+        itm
       end
 
       def submap(col, val, sub=nil)
@@ -242,7 +288,7 @@ module DLDInternet
       def widths_hash(item=nil)
         item ||= @object
         item.each do |key, _|
-          klen         = key.to_s.length
+          klen         = (@columns.nil? ? key : subkeys(key, @columns)).to_s.length
           wid          = @widths[key]
           @widths[key] = klen if !wid || wid < klen
         end
@@ -257,42 +303,77 @@ module DLDInternet
 
       def obj_width(obj)
         obj.each do |key, val|
-          set_width(key, val)
+          set_width(key, @columns.nil? ? val : subvalues(key, val, obj))
         end
       end
 
+      def column(text, options = {})
+        text
+      end
+
       def subcolumn(key, val, sub=nil)
-        sub ||= @columns
-        if sub[key]
-          if sub[key].is_a?(Hash)
-            vals = subvalues(key, val, sub)
-            if vals.is_a?(Array)
-              vals.flatten!
-              # vals = vals[0] if vals.size == 1
-            end
-            column(vals.to_s)
-          else
-            column(val.to_s) if sub.has_key?(m[1]) && sub[m[1]].nil?
-          end
+        if @columns.nil?
+          column(val.to_s)
         else
-          column(val.to_s)  if sub.has_key?(key) # && sub[key].nil?)
+          sub ||= @columns
+          if sub[key]
+            if sub[key].is_a?(Hash)
+              vals = subvalues(key, val, sub)
+              if vals.is_a?(Array)
+                vals.flatten!
+                # vals = vals[0] if vals.size == 1
+              end
+              column(vals.to_s)
+            else
+              column(val.to_s) if sub.has_key?(key)# && sub[key].nil?
+            end
+          else
+            column(val.to_s)  if sub.has_key?(key) # && sub[key].nil?)
+          end
         end
       end
 
       def subvalues(key, val, sub)
-        if sub[key].is_a?(Hash)
-          sub[key].keys.map {|k|
+        sk = sub[key]
+        if sk.is_a?(Hash)
+          sk.keys.map {|k|
             case val.class.name
-            when /^Hash/
+            when /Hash$/
               val[k]
-            when /^Array/
+            when /Array$/
               val.map {|v|
                 subvalues(k, v[k], sub[key])
               }
             end
           }
+        elsif sk.is_a?(Array)
+          sk.map {|v|
+            h = @columns.nil? ? v : @columns[key]
+            h.keys.map { |k|
+              subvalues(k, v[k], v)
+            }
+          }.flatten!
         else
           val
+        end
+      end
+
+      def subkeys(key, sub=nil)
+        sub ||= @columns
+        if sub && sub[key]
+          if sub[key].is_a?(Hash)
+            keys = sub[key].map { |k,v|
+              key+'.'+subkeys(k, v ? v : {})
+            }
+            if keys.is_a?(Array)
+              keys = keys.flatten
+            end
+            keys.join('.')
+          else
+            [key,subkeys(key, sub[key])].flatten if sub.has_key?(key)
+          end
+        else
+          key.to_s
         end
       end
 

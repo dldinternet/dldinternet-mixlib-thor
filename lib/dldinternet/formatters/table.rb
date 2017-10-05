@@ -15,6 +15,9 @@ module DLDInternet
         super
         # @object = [@object] unless @object.is_a?(Array)
         @values  = Hashie::Mash.new
+        unless @columns.nil?
+          @object = columnize_item(@object)
+        end
       end
 
       def capture_output
@@ -22,7 +25,7 @@ module DLDInternet
         begin
           yield
         rescue Exception => e
-          previous_stdout.write $stdout.string
+          @previous_stdout.write $stdout.string
           raise e
         end
 
@@ -38,8 +41,11 @@ module DLDInternet
 
       def restore_output
         string = $stdout.string
-        $stdout = @previous_stdout
         string
+      rescue => e
+        # noop
+      ensure
+        $stdout = @previous_stdout if @previous_stdout
       end
 
       def run
@@ -64,23 +70,29 @@ module DLDInternet
       end
 
       def header_row
-        list = @object.is_a?(Array) ? @object : [@object]
+        # list = if @columns.nil?
+        #          @object.is_a?(Array) ? @object[0].keys : @object.keys
+        #        else
+        #          @columns.keys.map{ |k| subkeys(k) }
+        #        end
+        list = @object.is_a?(Array) ? @object[0].keys : @object.keys
         row color: 'light_yellow', bold: true, encoding: :ascii do
-          list[0].each do |key, _|
-            column key.to_s, width: widths[key] if (@columns.nil? || @columns.keys.include?(key))
+          list.each do |key, _|
+            column subkeys(key).to_s, width: widths[key]
           end
         end
+      end
+
+      def column(text, options = {})
+        super
+        text
       end
 
       def obj_row(idx, obj)
         row color: 'white', bold: false do
           if obj.is_a? Hash
             obj.each do |key, val|
-              if @columns.nil? || (@columns.keys.include?(key) && @columns[key].nil?)
-                column val.to_s
-              else
-                subcolumn(key, val)
-              end
+              subcolumn(key, val)
             end
           else
             column obj.to_s, width: widths[idx]
@@ -91,7 +103,7 @@ module DLDInternet
 
       def format_it(item=nil)
         if item
-          @object = item
+          @object = columnize_item(item)
           @is_a_hash = @object.is_a?(Hash)
           @widths = nil
         end

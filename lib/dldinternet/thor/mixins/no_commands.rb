@@ -343,8 +343,8 @@ module DLDInternet
 
         def output(obj, fmtr=nil, header=false)
           unless obj.nil?
-            hash = obj.is_a?(Array) ? obj.map { |o| hash_it(o) } : (obj.is_a?(String) ? obj : hash_it(obj))
-            str = string_it(hash, fmtr, header)
+            it = obj.is_a?(Array) ? obj.map { |o| hash_it(o) } : (obj.is_a?(String) ? obj : hash_it(obj))
+            str = string_it(it, fmtr, header)
             write str
           end
         end
