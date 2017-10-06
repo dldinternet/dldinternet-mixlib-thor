@@ -439,7 +439,7 @@ module DLDInternet
             unless options[:cassette_path]
               options[:cassette_path] = vcr_default_cassette_path
             end
-            unless options[:cassette_path].match(%r{^#{File::SEPARATOR}})
+            unless %r{^#{File::SEPARATOR}}.match?(options[:cassette_path])
               if File.dirname($0).eql?(Dir.pwd)
                 @logger.error "Saving fixtures to #{Dir.pwd}!"
                 exit 1
