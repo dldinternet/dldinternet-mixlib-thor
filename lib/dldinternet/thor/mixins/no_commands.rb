@@ -211,6 +211,7 @@ module DLDInternet
             @options[:inifile] = File.expand_path(@options[:inifile])
             load_inifile
           elsif @options[:configfile]
+            @options[:configfile] = File.expand_path(@options[:configfile])
             if @options[:configfile] =~ /\.ini/i
               @options[:inifile] = @options[:configfile]
               load_inifile
@@ -430,12 +431,21 @@ module DLDInternet
             options[:stubber] = options[:stubber].map(&:to_sym)
           end
           if options[:vcr]
+            unless options[:cassette_path]
+              if ENV.has_key?('VCR_CASSETTE_PATH')
+                options[:cassette_path] = ENV['VCR_CASSETTE_PATH']
+              end
+            end
+            unless options[:cassette_path]
+              options[:cassette_path] = vcr_default_cassette_path
+            end
             unless options[:cassette_path].match(%r{^#{File::SEPARATOR}})
               if File.dirname($0).eql?(Dir.pwd)
                 @logger.error "Saving fixtures to #{Dir.pwd}!"
                 exit 1
               end
             end
+            options[:cassette_path] = File.expand_path(options[:cassette_path])
 
             command_pre_config_vcr
             opts = args[0].is_a?(Hash) ? args.shift : {}
@@ -443,6 +453,10 @@ module DLDInternet
             @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette])
           end
           yield if block_given?
+        end
+
+        def vcr_default_cassette_path
+          '~/vcr_cassettes'
         end
 
         def command_pre_config_vcr
