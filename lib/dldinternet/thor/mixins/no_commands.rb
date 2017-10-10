@@ -409,6 +409,7 @@ module DLDInternet
 
         def invoke_command(command, *args) #:nodoc:
           ::DLDInternet::Thor::Command.invocations = @_invocations.dup.map{ |_,v| v[0]}
+          @command_options = command.options
           super
         end
 
@@ -436,14 +437,14 @@ module DLDInternet
                 options[:cassette_path] = ENV['VCR_CASSETTE_PATH']
               end
             end
-            unless options[:cassette_path]
-              options[:cassette_path] = vcr_default_cassette_path
-            end
             unless %r{^#{File::SEPARATOR}}.match?(options[:cassette_path])
               if File.dirname($0).eql?(Dir.pwd)
                 @logger.error "Saving fixtures to #{Dir.pwd}!"
                 exit 1
               end
+            end
+            unless options[:cassette_path]
+              options[:cassette_path] = vcr_default_cassette_path
             end
             options[:cassette_path] = File.expand_path(options[:cassette_path])
 

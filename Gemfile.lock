@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    dldinternet-mixlib-thor (0.9.5)
+    dldinternet-mixlib-thor (0.9.6)
       activesupport (~> 5.1, >= 5.1.4)
       awesome_print
       command_line_reporter (~> 3.3, >= 3.3.6)
