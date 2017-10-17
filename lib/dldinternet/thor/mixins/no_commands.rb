@@ -45,13 +45,14 @@ module DLDInternet
   module Thor
     LOG_LEVELS = [:trace, :debug, :info, :note, :warn, :error, :fatal, :todo]
 
-    class OptionsMash < ::Hashie::Mash ; end
-    class ConfigMash < ::Hashie::Mash
+    class SilentMash < ::Hashie::Mash
       def initialize(source_hash = nil, default = nil, &blk)
         self.class.disable_warnings
         super
       end
     end
+    class OptionsMash < SilentMash ; end
+    class ConfigMash < SilentMash ; end
 
     module MixIns
       module NoCommands
@@ -76,7 +77,6 @@ module DLDInternet
 
         def writeable_options
           return if @options.is_a?(OptionsMash)
-          OptionsMash.disable_warnings
           @options = OptionsMash.new(@options.to_h)
         end
 
