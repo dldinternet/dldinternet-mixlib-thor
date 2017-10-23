@@ -432,21 +432,7 @@ module DLDInternet
             options[:stubber] = options[:stubber].map(&:to_sym)
           end
           if options[:vcr]
-            unless options[:cassette_path]
-              if ENV.has_key?('VCR_CASSETTE_PATH')
-                options[:cassette_path] = ENV['VCR_CASSETTE_PATH']
-              end
-            end
-            unless %r{^#{File::SEPARATOR}}.match?(options[:cassette_path])
-              if File.dirname($0).eql?(Dir.pwd)
-                @logger.error "Saving fixtures to #{Dir.pwd}!"
-                exit 1
-              end
-            end
-            unless options[:cassette_path]
-              options[:cassette_path] = vcr_default_cassette_path
-            end
-            options[:cassette_path] = File.expand_path(options[:cassette_path])
+            command_pre_vcr_cassette_path
 
             command_pre_config_vcr
             opts = args[0].is_a?(Hash) ? args.shift : {}
@@ -454,6 +440,29 @@ module DLDInternet
             @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette])
           end
           yield if block_given?
+        end
+
+        def command_pre_vcr_cassette_path
+          return if @command_pre_vcr_cassette_path
+
+          cassette_path           = options[:cassette_path]
+          unless cassette_path
+            if ENV.has_key?('VCR_CASSETTE_PATH')
+              cassette_path = ENV['VCR_CASSETTE_PATH']
+            end
+          end
+          unless %r{^#{File::SEPARATOR}}.match?(cassette_path)
+            if File.dirname($0).eql?(Dir.pwd)
+              @logger.error "Saving fixtures to #{Dir.pwd}!"
+              exit 1
+            end
+          end
+          unless cassette_path
+            cassette_path = vcr_default_cassette_path
+          end
+          options[:cassette_path] = File.expand_path(cassette_path)
+          @command_pre_vcr_cassette_path = true
+          cassette_path
         end
 
         def vcr_default_cassette_path
