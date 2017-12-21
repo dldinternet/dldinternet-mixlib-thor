@@ -375,15 +375,15 @@ module DLDInternet
             output(header_line(res, fmtr), fmtr, true) unless options[:header] === false
             case res.class.name
             when /Array/
-              res.each do |obj|
+              fmtr.object.each do |obj|
                 output format_line(obj, fmtr)
               end
             # when /Hash|String/
             else
-              output format_line(res, fmtr)
+              output format_line(fmtr.object || res, fmtr)
             end
           else
-            output res
+            output fmtr.object || res
           end
         end
 
@@ -436,7 +436,10 @@ module DLDInternet
 
             command_pre_config_vcr
             opts = args[0].is_a?(Hash) ? args.shift : {}
-            options[:cassette] ||= @_invocations.map{ |_,v| v[0]}.join('-')
+            unless options[:cassette]
+              options[:cassette] = @_invocations.map{ |_,v| v[0]}.join('-')
+              options[:cassette_not_given] = true
+            end
             @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette])
           end
           yield if block_given?
