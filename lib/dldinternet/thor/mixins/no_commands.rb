@@ -42,15 +42,17 @@ class FalseClass
 end
 
 module DLDInternet
+
+  class SilentMash < ::Hashie::Mash
+    def initialize(source_hash = nil, default = nil, &blk)
+      self.class.disable_warnings
+      super
+    end
+  end
+
   module Thor
     LOG_LEVELS = [:trace, :debug, :info, :note, :warn, :error, :fatal, :todo]
 
-    class SilentMash < ::Hashie::Mash
-      def initialize(source_hash = nil, default = nil, &blk)
-        self.class.disable_warnings
-        super
-      end
-    end
     class OptionsMash < SilentMash ; end
     class ConfigMash < SilentMash ; end
 
@@ -289,6 +291,8 @@ module DLDInternet
           when :none
           # when :basic
           when :text
+          when :plain
+          when :none
             # noop
           when :awesome
             format_helper = DLDInternet::Formatters::Awesome.new(obj, notation, title: opts[:title], columns: opts[:columns])
@@ -319,15 +323,20 @@ module DLDInternet
           end
           if robj.nil?
             robj
-          elsif robj.respond_to?(:to_hash)
-            robj.to_hash
-          elsif robj.respond_to?(:to_a)
-            robj.to_a.map { |obj| hash_it(obj) }
           elsif repre
             representation = repre.new(robj)
             representation.to_hash
-          elsif robj.respond_to?(:to_h)
-            robj.to_h
+          elsif robj.is_a?(Hash)
+            robj =  if robj.respond_to?(:to_hash)
+                      robj.to_hash
+                    elsif robj.respond_to?(:to_h)
+                      robj.to_h
+                    else
+                      raise "How to hash #{robj.ai}"
+                    end
+            Hash[robj.map{ |k,v| [k,hash_it(v)] }]
+          elsif robj.is_a?(Array)
+            robj.to_a.map { |obj| hash_it(obj) }
           else
             robj
           end
@@ -440,7 +449,9 @@ module DLDInternet
               options[:cassette] = @_invocations.map{ |_,v| v[0]}.join('-')
               options[:cassette_not_given] = true
             end
-            @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette])
+            options[:cassette_options] ||= {}
+            ::VCR::Cassette.logger ||= logger
+            @cassette = ::VCR.insert_cassette(opts[:cassette] || options[:cassette], options[:cassette_options])
           end
           yield if block_given?
         end

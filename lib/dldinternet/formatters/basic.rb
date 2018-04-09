@@ -28,7 +28,7 @@ module DLDInternet
         if @columns
           @columns = Hashie::Mash.new(Hash[@columns.split(/\s*,\s*/).map{ |c| [c, nil]}])
           @columns.dup.map{ |h,v|
-            submap(h, v)
+            submap!(h, v)
           }
           @object = columnize_item(@object)
         end
@@ -253,7 +253,7 @@ module DLDInternet
             columnize_item(obj)
           }
         else
-          itm = ::Hashie::Mash.new
+          itm = {} # ::Hashie::Mash.new
           @columns.map {|k, _|
             itm[k] = item[k]
           }
@@ -261,13 +261,13 @@ module DLDInternet
         itm
       end
 
-      def submap(col, val, sub=nil)
+      def submap!(col, val, sub=nil)
         sub ||= @columns
         m = col.match(/^([^.]+)\.(.*)$/)
         if m
           val = sub[m[1]]
-          val ||= Hashie::Mash.new
-          submap(m[2], val, val)
+          val ||= {} # Hashie::Mash.new
+          submap!(m[2], val, val)
           sub[m[1]] = val
           sub.delete(col)
         else
@@ -348,17 +348,34 @@ module DLDInternet
               val.map {|v|
                 subvalues(k, v[k], sub[key])
               }
+            else
+              raise "Not catering for #{val.class.name}"
             end
           }
         elsif sk.is_a?(Array)
-          sk.map {|v|
+          fsk = sk.map {|v|
             h = @columns.nil? ? v : @columns[key]
-            h.keys.map { |k|
+            fv = h ? h.keys.map { |k|
               subvalues(k, v[k], v)
-            }
-          }.flatten!
+            } : v
+            fv = simple_value(fv)
+            fv
+          }.flatten
+          fsk
         else
           val
+        end
+      end
+
+      def simple_value(fv)
+        if fv.is_a?(Hash)
+          fv.to_hash
+        elsif fv.is_a?(Array)
+          fv.map{ |v| simple_value(v) }
+        elsif fv.is_a?(String)
+          fv
+        else
+          raise "Not catering for #{fv.class.name}"
         end
       end
 
